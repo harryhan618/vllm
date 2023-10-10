@@ -53,7 +53,10 @@ class Worker:
         # Env vars will be set by Ray.
         self.rank = self.rank if self.rank is not None else int(
             os.getenv("RANK", "-1"))
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        # local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        local_rank = self.rank
+        assert local_rank < torch.cuda.device_count(), "Currently only supoort One node"
+
         self.device = torch.device(f"cuda:{local_rank}")
         if self.rank < 0:
             raise ValueError("Invalid or unspecified rank.")

@@ -127,22 +127,27 @@ class LLMEngine:
         # before CUDA_VISIBLE_DEVICES is set in the Worker
         from vllm.worker.worker import Worker  # pylint: disable=import-outside-toplevel
 
-        assert self.parallel_config.world_size == 1, (
-            "Ray is required if parallel_config.world_size > 1.")
+        # assert self.parallel_config.world_size == 1, (
+        #     "Ray is required if parallel_config.world_size > 1.")
+
+        # by Yibo
+        assert self.parallel_config.tensor_parallel_size == 1, (
+            "Only Support Pipeline Parallelism.")
 
         self.workers: List[Worker] = []
-        worker = Worker(
-            self.model_config,
-            self.parallel_config,
-            self.scheduler_config,
-            0,
-            distributed_init_method,
-        )
-        self.workers.append(worker)
-        self._run_workers(
-            "init_model",
-            get_all_outputs=True,
-        )
+        for i in range(self.parallel_config.world_size):
+            worker = Worker(
+                self.model_config,
+                self.parallel_config,
+                self.scheduler_config,
+                i,
+                distributed_init_method,
+            )
+            self.workers.append(worker)
+            self._run_workers(
+                "init_model",
+                get_all_outputs=True,
+            )
 
     def _init_workers_ray(self, placement_group: "PlacementGroup",
                           **ray_remote_kwargs):
@@ -701,7 +706,7 @@ class LLMEngine:
             return all_outputs
 
         # Make sure all workers have the same results.
-        output = all_outputs[0]
-        for other_output in all_outputs[1:]:
-            assert output == other_output
+        output = all_outputs[-1]
+        # for other_output in all_outputs[1:]:
+        #     assert output == other_output
         return output

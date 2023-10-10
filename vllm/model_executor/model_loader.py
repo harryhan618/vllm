@@ -10,6 +10,7 @@ from vllm.config import ModelConfig
 from vllm.model_executor.models import *  # pylint: disable=wildcard-import
 from vllm.model_executor.weight_utils import (get_quant_config,
                                               initialize_dummy_weights)
+import vllm.model_executor.parallel_utils.parallel_state as parallel_state 
 
 # TODO(woosuk): Lazy-load the model classes.
 _MODEL_REGISTRY = {
@@ -91,6 +92,7 @@ def get_model(model_config: ModelConfig) -> nn.Module:
             model = model_class(model_config.hf_config, quant_config)
         else:
             model = model_class(model_config.hf_config)
+        model = split_model_pipeline(model)
         if model_config.load_format == "dummy":
             model = model.cuda()
             # NOTE(woosuk): For accurate performance evaluation, we assign
@@ -102,3 +104,30 @@ def get_model(model_config: ModelConfig) -> nn.Module:
                                model_config.load_format, model_config.revision)
             model = model.cuda()
     return model.eval()
+
+
+def split_model_pipeline(model):
+    """
+    decoder only!
+    """
+    rank_ppl = parallel_state.get_pipeline_model_parallel_rank()
+    num_layers_per_pipeline = len(model.model.decoder.layers) // parallel_state.get_pipeline_model_parallel_world_size()
+    
+    layer_idx_start = rank_ppl * num_layers_per_pipeline
+    if parallel_state.is_pipeline_last_stage():
+        layer_idx_end = len(model.model.decoder.layers)
+    else:
+        layer_idx_end = (rank_ppl+1) * num_layers_per_pipeline
+
+    layer_idx_pop_list_head = list(range(0, layer_idx_start)) 
+    layer_idx_pop_list_tail = list(range(layer_idx_end, len(model.model.decoder.layers)))
+    for i in layer_idx_pop_list_tail:
+        model.model.decoder.layers.pop(-1)
+    for i in layer_idx_pop_list_head:
+        model.model.decoder.layers.pop(0)
+
+    with open(f"test_{rank_ppl}.txt", "w") as f:
+        print(layer_idx_pop_list_head, layer_idx_pop_list_tail, file=f)
+        print(model, file=f)
+    
+    return model
