@@ -145,6 +145,10 @@ class AsyncLLM(EngineClient):
         # Loggers.
         self.logger_manager: Optional[StatLoggerManager] = None
         if self.log_stats:
+            # Add request profiler if enabled via environment
+            from vllm.v1.engine.request_profiler_integration import maybe_add_v1_request_profiler
+            stat_loggers = maybe_add_v1_request_profiler(stat_loggers)
+
             self.logger_manager = StatLoggerManager(
                 vllm_config=vllm_config,
                 engine_idxs=self.engine_core.engine_ranks_managed,
