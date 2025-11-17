@@ -280,6 +280,12 @@ class OpenAIServingChat(OpenAIServing):
                     sampling_params = request.to_sampling_params(
                         max_tokens, self.model_config.logits_processor_pattern,
                         self.default_sampling_params)
+                    if (request.replay_output is not None and
+                            isinstance(sampling_params, SamplingParams)):
+                        extra_args = dict(sampling_params.extra_args
+                                          or {})
+                        extra_args["replay_output"] = request.replay_output
+                        sampling_params.extra_args = extra_args
 
                 self._log_inputs(request_id,
                                  request_prompts[i],

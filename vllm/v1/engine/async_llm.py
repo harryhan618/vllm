@@ -286,6 +286,18 @@ class AsyncLLM(EngineClient):
 
         is_pooling = isinstance(params, PoolingParams)
 
+        # prepare replay param
+        if isinstance(params, SamplingParams):
+            replay_output = params.extra_args.get("replay_output")
+            if replay_output is not None:
+                if is_pooling:
+                    raise ValueError("Replay generation is only supported for sampling requests.")
+                replay_tokens = self.tokenizer.encode(replay_output, lora_request)
+                replay_eos_token = self.tokenizer.get_lora_tokenizer(lora_request).eos_token_id
+                print(f"||| replay_output: {replay_output}, {replay_tokens}, {replay_eos_token}")
+                params.extra_args["replay_token_ids"] = replay_tokens
+                params.extra_args["replay_stop_token_id"] = replay_eos_token
+
         # Create a new output collector for the request.
         queue = RequestOutputCollector(output_kind=params.output_kind)
 

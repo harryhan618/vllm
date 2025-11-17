@@ -612,6 +612,10 @@ class ChatCompletionRequest(OpenAIBaseModel):
         description=("Additional request parameters with string or "
                      "numeric values, used by custom extensions."),
     )
+    replay_output: Optional[str] = Field(
+        default=None,
+        description=("Optional deterministic response text for replay mode."),
+    )
 
     # --8<-- [end:chat-completion-extra-params]
 
@@ -698,10 +702,15 @@ class ChatCompletionRequest(OpenAIBaseModel):
             structural_tag=self.structural_tag,
         )
 
-        extra_args: dict[str, Any] = self.vllm_xargs if self.vllm_xargs else {}
+        extra_args: dict[str, Any] = dict(self.vllm_xargs
+                                          ) if self.vllm_xargs else {}
         if self.kv_transfer_params:
             # Pass in kv_transfer_params via extra_args
             extra_args["kv_transfer_params"] = self.kv_transfer_params
+        if self.replay_output is not None:
+            # Preserve user-provided replay text so the backend can tokenize it.
+            extra_args = dict(extra_args)
+            extra_args["replay_output"] = self.replay_output
         return SamplingParams.from_optional(
             n=self.n,
             best_of=self.best_of,

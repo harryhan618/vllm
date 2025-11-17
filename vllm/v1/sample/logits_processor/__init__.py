@@ -35,12 +35,6 @@ STR_POOLING_REJECTS_LOGITSPROCS = ("Pooling models do not support custom"
 
 LOGITSPROCS_GROUP = 'vllm.logits_processors'
 
-BUILTIN_LOGITS_PROCESSORS: list[type[LogitsProcessor]] = [
-    MinTokensLogitsProcessor,
-    LogitBiasLogitsProcessor,
-    MinPLogitsProcessor,
-]
-
 
 def _load_logitsprocs_plugins() -> list[type[LogitsProcessor]]:
     """Load all installed logit processor plugins"""
@@ -285,10 +279,95 @@ class AdapterLogitsProcessor(LogitsProcessor):
         return logits
 
 
+class _ReplayRequestProcessor:
+    """Per-request processor that forces the next token to a replay target."""
+
+    def __init__(self, token_ids: list[int],
+                 force_stop_token_id: Optional[int]) -> None:
+        self._token_ids = token_ids
+        self._force_stop_token_id = force_stop_token_id
+
+    def __call__(self, output_ids: list[int],
+                 logits: torch.Tensor) -> torch.Tensor:
+        next_index = len(output_ids)
+        force_token: Optional[int] = None
+        if next_index < len(self._token_ids):
+            force_token = self._token_ids[next_index]
+        elif self._force_stop_token_id is not None:
+            force_token = self._force_stop_token_id
+
+        if force_token is None:
+            return logits
+
+        logits.fill_(float("-inf"))
+        logits[force_token] = 0.0
+        return logits
+
+
+class ReplayLogitsProcessor(AdapterLogitsProcessor):
+    """Forces sampling to follow a replay token sequence when provided."""
+
+    TOKEN_IDS_KEY = "replay_token_ids"
+    FORCE_STOP_TOKEN_KEY = "replay_stop_token_id"
+
+    def is_argmax_invariant(self) -> bool:
+        # Overrides greedy decisions, so must run before that stage.
+        return False
+
+    def new_req_logits_processor(
+        self,
+        params: SamplingParams,
+    ) -> Optional[RequestLogitsProcessor]:
+        if not params.extra_args:
+            return None
+
+        replay_tokens = params.extra_args.get(self.TOKEN_IDS_KEY)
+        if replay_tokens is None:
+            return None
+
+        if not isinstance(replay_tokens, Sequence):
+            logger.warning(
+                "Expected %s to be a sequence of token ids, got %s instead.",
+                self.TOKEN_IDS_KEY, type(replay_tokens))
+            return None
+
+        try:
+            token_ids = [int(token) for token in replay_tokens]
+        except (TypeError, ValueError):
+            logger.warning("Unable to coerce %s into token ids; "
+                           "ignoring replay logits processor.",
+                           self.TOKEN_IDS_KEY)
+            return None
+
+        if not token_ids:
+            logger.warning("Replay token list is empty; skipping replay mode.")
+            return None
+
+        force_stop_token: Optional[int] = None
+        if (stop_token := params.extra_args.get(self.FORCE_STOP_TOKEN_KEY)
+            ) is not None:
+            try:
+                force_stop_token = int(stop_token)
+            except (TypeError, ValueError):
+                logger.warning("Unable to coerce %s (%s) into int; "
+                               "ignoring replay stop token.",
+                               self.FORCE_STOP_TOKEN_KEY, stop_token)
+
+        return _ReplayRequestProcessor(token_ids, force_stop_token)
+
+
+BUILTIN_LOGITS_PROCESSORS: list[type[LogitsProcessor]] = [
+    MinTokensLogitsProcessor,
+    LogitBiasLogitsProcessor,
+    MinPLogitsProcessor,
+    ReplayLogitsProcessor,
+]
+
+
 __all__ = [
     "LogitsProcessor", "LogitBiasLogitsProcessor", "MinPLogitsProcessor",
-    "MinTokensLogitsProcessor", "BatchUpdate", "BatchUpdateBuilder",
-    "MoveDirectionality", "LogitsProcessors", "build_logitsprocs",
-    "STR_POOLING_REJECTS_LOGITSPROCS", "LOGITSPROCS_GROUP",
-    "AdapterLogitsProcessor"
+    "MinTokensLogitsProcessor", "ReplayLogitsProcessor", "BatchUpdate",
+    "BatchUpdateBuilder", "MoveDirectionality", "LogitsProcessors",
+    "build_logitsprocs", "STR_POOLING_REJECTS_LOGITSPROCS",
+    "LOGITSPROCS_GROUP", "AdapterLogitsProcessor"
 ]
